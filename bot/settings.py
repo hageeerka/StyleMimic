@@ -10,7 +10,7 @@ RU: Используйте переменные окружения или пом
 import os
 
 # Telegram token obtained from Bot Father
-TELEGRAM_TOKEN = "7648104021:AAHM5l-EY-lVdTzlPZBbAJo0_LhuIctUwPE"
+TELEGRAM_TOKEN = "BOT_TOKEN"
 
 # First message that will be sent to model as it was user.
 # If left blank or None will do not perform this operation.
