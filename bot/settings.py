@@ -16,16 +16,12 @@ TELEGRAM_TOKEN = "7648104021:AAHM5l-EY-lVdTzlPZBbAJo0_LhuIctUwPE"
 # If left blank or None will do not perform this operation.
 START_USER_MESSAGE = ""
 
-# Model system message.
-SYSTEM_MESSAGE = """You are a bot"""
-
 # Translator module, change from default `en` to something like `ru` to perform translation on user messages.
-# NOTICE: WILL USE TRANSLATOR API (NOT MODEL ONE)
-BASE_LANGUAGE = "en"
+BASE_LANGUAGE = "ru"
 
 # Ollama server configuration
 OLLAMA_API_HOST = os.getenv("OLLAMA_API_HOST", default="http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="qwen2.5-coder")
+OLLAMA_MODEL = os.getenv("OLLAMA_BOT_MODEL", default="ilyagusev/saiga_nemo_12b")
 OLLAMA_MODEL_TEMPERATURE = 1
 OLLAMA_KEEP_ALIVE = "5m"
 # TODO: OLLAMA_INSTALL_MISSING_MODELS

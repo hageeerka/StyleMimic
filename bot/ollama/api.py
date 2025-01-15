@@ -1,3 +1,7 @@
+# Этот код взят из проекта [ollama-telegram-ai] (https://github.com/kirillzhosul/ollama-telegram-ai)
+# Автор: Kirill Zhosul
+# Лицензия: MIT
+
 """
 API wrapper around ollama
 
@@ -93,15 +97,18 @@ async def generate_raw_chat_completion(
 
 
 async def generate_chat_completion(
-    messages: list[OllamaChatMessage],
-    model: str,
-    **ollama_options: Any,
-) -> AsyncGenerator[Tuple[bool, Union[OllamaCompletionResponseChunk, OllamaErrorChunk]], Any]:
+        system_prompt: str,
+        messages: list[OllamaChatMessage],
+        model: str,
+        **ollama_options: Any,
+) -> AsyncGenerator[Tuple[bool, Union[OllamaCompletionResponseChunk, OllamaErrorChunk]], None]:
     """
-    Generates chunked chat response
+    Generates chunked chat response with a system prompt
     """
+    messages.insert(0, OllamaChatMessage(role="system", content=system_prompt))
+
     async for raw_segment in generate_raw_chat_completion(
-        messages, model, **ollama_options
+            messages, model, **ollama_options
     ):
         if "error" in raw_segment:
             yield False, OllamaErrorChunk(error=raw_segment["error"])

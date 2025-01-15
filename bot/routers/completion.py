@@ -1,30 +1,17 @@
-from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
-from pydantic import BaseModel
-
-from bot.bot import bot as aiogram_bot
-from bot.keyboards.inline import answer_keyboard
-from bot.keyboards.reply import base_keyboard
-from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
-from bot.ollama.api import get_installed_models, model_is_installed
-from bot.ollama.dto import OllamaErrorChunk
-from bot.settings import (
-    BASE_LANGUAGE,
-    OLLAMA_MODEL,
-    OLLAMA_MODEL_TEMPERATURE,
-    START_USER_MESSAGE,
-    SYSTEM_MESSAGE,
-)
-from bot.translator import translate
 from typing import Optional
 
+from aiogram import  Router
+from aiogram.types import Message
+from pydantic import BaseModel
+
+from bot.ollama import OllamaChat, OllamaChatMessage, generate_chat_completion
+from bot.ollama.dto import OllamaErrorChunk
+from bot.settings import BASE_LANGUAGE, OLLAMA_MODEL, OLLAMA_MODEL_TEMPERATURE
+
+from bot.translator import translate
+from bot.system_prompt.prompt import create_prompt
 
 router = Router()
-
-
-def wrap(s: str, w: int) -> list[str]:
-    return [s[i : i + w] for i in range(0, len(s), w)]
-
 
 class UserChat(BaseModel):
     ollama_chat: OllamaChat
@@ -33,54 +20,38 @@ class UserChat(BaseModel):
     do_translate: bool = True
     previous_prompt: Optional[str] = None
 
-
 chats: dict[int, UserChat] = {}
 
 
-async def generate(message: Message, user_id: int, text: str):
-    if text == "New chat":
-        await message.answer("New chat created!", reply_markup=base_keyboard)
-        return _delete_chat(user_id)
-    if text == "/models":
-        await message.answer(
-            "\n".join([model.name for model in await get_installed_models()])
-        )
-        return
-    if _create_chat(user_id):
-        await message.answer(f"Chat created, model selected to {OLLAMA_MODEL}")
+def wrap(s: str, w: int) -> list[str]:
+    """
+    Splits it into several messages if the response does not fit into one telegram message.
+    """
+    return [s[i : i + w] for i in range(0, len(s), w)]
+
+
+async def generate(message: Message, user_id: int, text: str, system_prompt: str) -> list:
+    """
+    Generates a response from the model and returns the received message.
+    """
+    global initial_content
+    _create_chat(user_id)
+
     chat = chats[user_id]
 
-    if text == "/translate_on":
-        chats[user_id].do_translate = True
-        return
-    if text == "/translate_off":
-        chats[user_id].do_translate = False
-        return
-    try:
-        if chat.linked_last_messages:
-            await aiogram_bot.edit_message_reply_markup(
-                chat_id=user_id,
-                message_id=chat.linked_last_messages,
-                reply_markup=None,
-            )
-    except Exception:
-        print("error on clear")
+    # if text == "/translate_on":
+    #     chats[user_id].do_translate = True
+    #     return
+    # if text == "/translate_off":
+    #     chats[user_id].do_translate = False
+    #     return
 
     chat.linked_last_messages = None
 
-    if text.startswith("/set_model"):
-        model_to_set = "".join(text.split()[1:])
-        if not await model_is_installed(model_to_set):
-            await message.answer(f"Model {model_to_set} does not exists!")
-            return
-        await message.answer(f"Model was set to {model_to_set}!")
-        chats[user_id].selected_model = model_to_set
-
-        return
-    msg = await message.answer("... thinking ...")
+    msg = await message.answer("... генерация ...")
 
     if chat.do_translate:
-        prompt = await translate(text, BASE_LANGUAGE, "en")
+        prompt = await translate(text, BASE_LANGUAGE, "ru")
     else:
         prompt = text
     chat.previous_prompt = prompt
@@ -89,8 +60,9 @@ async def generate(message: Message, user_id: int, text: str):
 
     assistant_content = ""
     async for is_done, chunk in generate_chat_completion(
+        system_prompt,
         chat.ollama_chat.messages,
-        OLLAMA_MODEL,
+        chat.selected_model,
         temperature=OLLAMA_MODEL_TEMPERATURE,
     ):
         if is_done:
@@ -99,11 +71,10 @@ async def generate(message: Message, user_id: int, text: str):
             try:
                 await msg.edit_text(
                     (
-                        (await translate(initial_content, "en", BASE_LANGUAGE))
+                        (await translate(initial_content, "ru", BASE_LANGUAGE))
                         if chat.do_translate
                         else initial_content
                     ),
-                    reply_markup=None if wrapped_response else answer_keyboard,
                 )
             except Exception:
                 print("Error to set")
@@ -113,11 +84,10 @@ async def generate(message: Message, user_id: int, text: str):
                     if chat.do_translate:
                         await msg.edit_text(
                             (
-                                (await translate(text, "en", BASE_LANGUAGE))
+                                (await translate(text, "ru", BASE_LANGUAGE))
                                 if chat.do_translate
                                 else text
                             ),
-                            reply_markup=answer_keyboard,
                         )
             print(f"[{user_id}]: Finished!")
         else:
@@ -130,15 +100,37 @@ async def generate(message: Message, user_id: int, text: str):
     chat.ollama_chat.messages.append(
         OllamaChatMessage(role="assistant", content=assistant_content)
     )
+    return initial_content
 
 
-def _delete_chat(user_id: int) -> None:
-    if user_id not in chats:
-        return
-    del chats[user_id]
+async def handle_dialog_message_generic(message: Message, user_messages_dict: dict, is_dialog_state: bool):
+    """
+    Generates a response to the user and saves the history of the dialog.
+    """
+    if message.from_user and message.text:
+        user_id = message.from_user.id
+
+        if user_id not in user_messages_dict:
+            user_messages_dict[user_id] = []
+
+        messages = user_messages_dict[user_id]
+        system_prompt = create_prompt(user_id, messages if messages else "", is_dialog_state)
+
+        initial_content = await generate(message, user_id, message.text, system_prompt)
+
+        user_messages_dict[user_id].extend([
+            f"user: {message.text}",
+            f"assistant: {initial_content}"
+        ])
+
+        if len(user_messages_dict[user_id]) > 30:
+            user_messages_dict[user_id] = user_messages_dict[user_id][-30:]
 
 
 def _create_chat(user_id: int) -> bool:
+    """
+    Creates a new chat for the user with the specified user_id
+    """
     if user_id in chats:
         return False
 
@@ -146,62 +138,4 @@ def _create_chat(user_id: int) -> bool:
         selected_model=OLLAMA_MODEL,
         ollama_chat=OllamaChat(messages=[]),
     )
-    if SYSTEM_MESSAGE:
-        chats[user_id].ollama_chat.messages.append(
-            OllamaChatMessage(role="system", content=SYSTEM_MESSAGE)
-        )
-    if START_USER_MESSAGE:
-        chats[user_id].ollama_chat.messages.append(
-            OllamaChatMessage(role="user", content=START_USER_MESSAGE)
-        )
     return True
-
-
-@router.callback_query(F.data == "like")
-async def like(callback: CallbackQuery):
-    if not callback.from_user:
-        return print("[ERROR]: Invalid message")
-
-    user_id = callback.from_user.id
-    if user_id not in chats:
-        return
-
-    chat = chats[user_id]
-    if chat.linked_last_messages:
-        await aiogram_bot.edit_message_reply_markup(
-            chat_id=user_id,
-            message_id=chat.linked_last_messages,
-            reply_markup=None,
-        )
-    chat.linked_last_messages = None
-
-
-@router.callback_query(F.data == "dislike")
-async def dislike(callback: CallbackQuery):
-    if not callback.from_user:
-        return print("[ERROR]: Invalid message")
-
-    user_id = callback.from_user.id
-    if user_id not in chats:
-        return
-
-    chat = chats[user_id]
-    if not chat.linked_last_messages:
-        return
-    await aiogram_bot.delete_message(
-        user_id,
-        message_id=chat.linked_last_messages,
-    )
-    if not chat.previous_prompt:
-        return
-    if not isinstance(callback.message, Message):
-        raise Exception
-
-    await generate(callback.message, user_id, chat.previous_prompt)
-
-
-@router.message()
-async def answer(message: Message) -> None:
-    if message.from_user is None or message.text is None:
-        return
-    await generate(message, message.from_user.id, message.text)
