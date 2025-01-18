@@ -1,0 +1,6 @@
+aiogram
+aiohttp
+pydantic
+nltk
+scikit-learn
+emoji
